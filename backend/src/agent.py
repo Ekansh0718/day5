@@ -1,270 +1,329 @@
-# ======================================================
-# 🌿 DAILY WELLNESS VOICE COMPANION
-# 🚀 Context-Aware Agents & JSON Persistence
-# ======================================================
+"""
+SQLite Database Module for Fraud Alert System
+Handles all database operations for fraud cases
+"""
 
-import logging
+import sqlite3
 import json
 import os
-import asyncio
 from datetime import datetime
-from typing import Annotated, Literal, List, Optional
-from dataclasses import dataclass, field, asdict
+from typing import List, Optional, Dict, Any
+from dataclasses import dataclass, asdict
 
-print("\n" + "🌿" * 50)
-print("💡 agent.py LOADED SUCCESSFULLY!")
-print("🌿" * 50 + "\n")
+# Get absolute path to database file (same directory as this script)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_PATH = os.path.join(SCRIPT_DIR, "fraud_cases.db")
 
-from dotenv import load_dotenv
-from pydantic import Field
-from livekit.agents import (
-    Agent,
-    AgentSession,
-    JobContext,
-    JobProcess,
-    RoomInputOptions,
-    WorkerOptions,
-    cli,
-    metrics,
-    MetricsCollectedEvent,
-    RunContext,
-    function_tool,
-)
-
-from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
-
-logger = logging.getLogger("agent")
-load_dotenv(".env.local")
-
-# ======================================================
-# 🧠 STATE MANAGEMENT & DATA STRUCTURES
-# ======================================================
 
 @dataclass
-class CheckInState:
-    """🌿 Holds data for the CURRENT daily check-in"""
-    mood: str | None = None
-    energy: str | None = None
-    objectives: list[str] = field(default_factory=list)
-    advice_given: str | None = None
-    
-    def is_complete(self) -> bool:
-        """✅ Check if we have the core check-in data"""
-        return all([
-            self.mood is not None,
-            self.energy is not None,
-            len(self.objectives) > 0
-        ])
-    
-    def to_dict(self) -> dict:
-        return asdict(self)
+class FraudCase:
+    """Fraud case data model"""
+    id: str
+    userName: str
+    securityIdentifier: str
+    cardEnding: str
+    cardType: str
+    transactionName: str
+    transactionAmount: str
+    transactionTime: str
+    transactionLocation: str
+    transactionCategory: str
+    transactionSource: str
+    status: str
+    securityQuestion: str
+    securityAnswer: str
+    createdAt: str
+    outcome: str = "pending"
+    outcomeNote: str = ""
 
-@dataclass
-class Userdata:
-    """👤 User session data passed to the agent"""
-    current_checkin: CheckInState
-    history_summary: str  # String containing info about previous sessions
-    session_start: datetime = field(default_factory=datetime.now)
 
-# ======================================================
-# 💾 PERSISTENCE LAYERS (JSON LOGGING)
-# ======================================================
-WELLNESS_LOG_FILE = "wellness_log.json"
+class FraudDatabase:
+    """SQLite Database handler for fraud cases"""
 
-def get_log_path():
-    base_dir = os.path.dirname(__file__)
-    backend_dir = os.path.abspath(os.path.join(base_dir, ".."))
-    return os.path.join(backend_dir, WELLNESS_LOG_FILE)
+    def __init__(self, db_path: str = DATABASE_PATH):
+        self.db_path = db_path
+        self.init_database()
 
-def load_history() -> list:
-    """📖 Read previous check-ins from JSON"""
-    path = get_log_path()
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding='utf-8') as f:
-            data = json.load(f)
-            return data if isinstance(data, list) else []
-    except Exception as e:
-        print(f"⚠️ Could not load history: {e}")
-        return []
+    def init_database(self) -> None:
+        """Initialize the database with fraud cases table"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
 
-def save_checkin_entry(entry: CheckInState) -> None:
-    """💾 Append new check-in to the JSON list"""
-    path = get_log_path()
-    history = load_history()
-    
-    # Create record
-    record = {
-        "timestamp": datetime.now().isoformat(),
-        "mood": entry.mood,
-        "energy": entry.energy,
-        "objectives": entry.objectives,
-        "summary": entry.advice_given
-    }
-    
-    history.append(record)
-    
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding='utf-8') as f:
-        json.dump(history, f, indent=4, ensure_ascii=False)
-        
-    print(f"\n✅ CHECK-IN SAVED TO {path}")
+            # Create fraud cases table
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS fraud_cases (
+                    id TEXT PRIMARY KEY,
+                    userName TEXT NOT NULL,
+                    securityIdentifier TEXT,
+                    cardEnding TEXT NOT NULL,
+                    cardType TEXT,
+                    transactionName TEXT,
+                    transactionAmount TEXT,
+                    transactionTime TEXT,
+                    transactionLocation TEXT,
+                    transactionCategory TEXT,
+                    transactionSource TEXT,
+                    status TEXT DEFAULT 'pending',
+                    securityQuestion TEXT,
+                    securityAnswer TEXT,
+                    outcome TEXT DEFAULT 'pending',
+                    outcomeNote TEXT,
+                    createdAt TEXT,
+                    lastUpdated TEXT,
+                    UNIQUE(cardEnding)
+                )
+                """
+            )
 
-# ======================================================
-# 🛠️ WELLNESS AGENT TOOLS
-# ======================================================
+        print("✅ Database initialized successfully")
 
-@function_tool
-async def record_mood_and_energy(
-    ctx: RunContext[Userdata],
-    mood: Annotated[str, Field(description="The user's emotional state (e.g., happy, stressed, anxious)")],
-    energy: Annotated[str, Field(description="The user's energy level (e.g., high, low, drained, energetic)")],
-) -> str:
-    """📝 Record how the user is feeling. Call this after the user describes their state."""
-    ctx.userdata.current_checkin.mood = mood
-    ctx.userdata.current_checkin.energy = energy
-    
-    print(f"📊 MOOD LOGGED: {mood} | ENERGY: {energy}")
-    
-    return f"I've noted that you are feeling {mood} with {energy} energy. I'm listening."
+    def add_fraud_case(self, case: FraudCase) -> bool:
+        """Add a new fraud case to the database"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
 
-@function_tool
-async def record_objectives(
-    ctx: RunContext[Userdata],
-    objectives: Annotated[list[str], Field(description="List of 1-3 specific goals the user wants to achieve today")],
-) -> str:
-    """🎯 Record the user's daily goals. Call this when user states what they want to do."""
-    ctx.userdata.current_checkin.objectives = objectives
-    print(f"🎯 OBJECTIVES LOGGED: {objectives}")
-    return "I've written down your goals for the day."
+                cursor.execute(
+                    """
+                    INSERT INTO fraud_cases 
+                    (id, userName, securityIdentifier, cardEnding, cardType, 
+                     transactionName, transactionAmount, transactionTime, 
+                     transactionLocation, transactionCategory, transactionSource,
+                     status, securityQuestion, securityAnswer, outcome, outcomeNote,
+                     createdAt, lastUpdated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        case.id,
+                        case.userName,
+                        case.securityIdentifier,
+                        case.cardEnding,
+                        case.cardType,
+                        case.transactionName,
+                        case.transactionAmount,
+                        case.transactionTime,
+                        case.transactionLocation,
+                        case.transactionCategory,
+                        case.transactionSource,
+                        case.status,
+                        case.securityQuestion,
+                        case.securityAnswer,
+                        case.outcome,
+                        case.outcomeNote,
+                        case.createdAt,
+                        datetime.now().isoformat(),
+                    ),
+                )
 
-@function_tool
-async def complete_checkin(
-    ctx: RunContext[Userdata],
-    final_advice_summary: Annotated[str, Field(description="A brief 1-sentence summary of the advice given")],
-) -> str:
-    """💾 Finalize the session, provide a recap, and save to JSON. Call at the very end."""
-    state = ctx.userdata.current_checkin
-    state.advice_given = final_advice_summary
-    
-    if not state.is_complete():
-        return "I can't finish yet. I still need to know your mood, energy, or at least one goal."
+            print(f"✅ Added fraud case: {case.id}")
+            return True
+        except Exception as e:
+            print(f"❌ Error adding fraud case: {e}")
+            return False
 
-    # Save to JSON
-    save_checkin_entry(state)
-    
-    print("\n" + "⭐" * 60)
-    print("🎉 WELLNESS CHECK-IN COMPLETED!")
-    print(f"💭 Mood: {state.mood}")
-    print(f"🎯 Goals: {state.objectives}")
-    print("⭐" * 60 + "\n")
+    def get_fraud_case_by_card(self, card_ending: str) -> Optional[FraudCase]:
+        """Get fraud case by card ending digits"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
 
-    recap = f"""
-    Here is your recap for today:
-    You are feeling {state.mood} and your energy is {state.energy}.
-    Your main goals are: {', '.join(state.objectives)}.
-    
-    Remember: {final_advice_summary}
-    
-    I've saved this in your wellness log. Have a wonderful day!
-    """
-    return recap
+                cursor.execute(
+                    "SELECT * FROM fraud_cases WHERE cardEnding = ?",
+                    (card_ending,),
+                )
 
-# ======================================================
-# 🧠 AGENT DEFINITION
-# ======================================================
+                row = cursor.fetchone()
 
-class WellnessAgent(Agent):
-    def __init__(self, history_context: str):
-        super().__init__(
-            instructions=f"""
-            You are a compassionate, supportive Daily Wellness Companion.
-            
-            🧠 **CONTEXT FROM PREVIOUS SESSIONS:**
-            {history_context}
-            
-            🎯 **GOALS FOR THIS SESSION:**
-            1. **Check-in:** Ask how they are feeling (Mood) and their energy levels.
-               - *Reference the history context if available (e.g., "Last time you were tired, how is today?").*
-            2. **Intentions:** Ask for 1-3 simple objectives for the day.
-            3. **Support:** Offer small, grounded, NON-MEDICAL advice.
-               - Example: "Try a 5-minute walk" or "Break that big task into small steps."
-            4. **Recap & Save:** Summarize their mood and goals, then call 'complete_checkin'.
+            if row:
+                return self._row_to_fraud_case(row)
+            return None
+        except Exception as e:
+            print(f"❌ Error getting fraud case: {e}")
+            return None
 
-            🚫 **SAFETY GUARDRAILS:**
-            - You are NOT a doctor or therapist.
-            - Do NOT diagnose conditions or prescribe treatments.
-            - If a user mentions self-harm or severe crisis, gently suggest professional help immediately.
+    def get_fraud_case_by_id(self, case_id: str) -> Optional[FraudCase]:
+        """Get fraud case by ID"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
 
-            🛠️ **Use the tools to record data as the user speaks.**
-            """,
-            tools=[
-                record_mood_and_energy,
-                record_objectives,
-                complete_checkin,
-            ],
+                cursor.execute(
+                    "SELECT * FROM fraud_cases WHERE id = ?",
+                    (case_id,),
+                )
+
+                row = cursor.fetchone()
+
+            if row:
+                return self._row_to_fraud_case(row)
+            return None
+        except Exception as e:
+            print(f"❌ Error getting fraud case: {e}")
+            return None
+
+    def get_all_fraud_cases(self) -> List[FraudCase]:
+        """Get all fraud cases from database"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                cursor.execute("SELECT * FROM fraud_cases")
+                rows = cursor.fetchall()
+
+            return [self._row_to_fraud_case(row) for row in rows]
+        except Exception as e:
+            print(f"❌ Error getting all fraud cases: {e}")
+            return []
+
+    def update_fraud_case_status(
+        self, case_id: str, status: str, outcome: str, note: str
+    ) -> bool:
+        """Update fraud case status and outcome"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                cursor.execute(
+                    """
+                    UPDATE fraud_cases 
+                    SET status = ?, outcome = ?, outcomeNote = ?, lastUpdated = ?
+                    WHERE id = ?
+                    """,
+                    (status, outcome, note, datetime.now().isoformat(), case_id),
+                )
+
+            print(
+                f"✅ Updated fraud case {case_id}: status={status}, outcome={outcome}"
+            )
+            return True
+        except Exception as e:
+            print(f"❌ Error updating fraud case: {e}")
+            return False
+
+    def delete_fraud_case(self, case_id: str) -> bool:
+        """Delete a fraud case"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM fraud_cases WHERE id = ?", (case_id,))
+
+            print(f"✅ Deleted fraud case: {case_id}")
+            return True
+        except Exception as e:
+            print(f"❌ Error deleting fraud case: {e}")
+            return False
+
+    def clear_all_cases(self) -> bool:
+        """Clear all fraud cases from database"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM fraud_cases")
+
+            print("✅ Cleared all fraud cases")
+            return True
+        except Exception as e:
+            print(f"❌ Error clearing database: {e}")
+            return False
+
+    def export_to_json(self, output_file: str = "fraud_cases_backup.json") -> bool:
+        """Export all fraud cases to JSON for backup"""
+        try:
+            cases = self.get_all_fraud_cases()
+            data = {
+                "fraud_cases": [asdict(case) for case in cases],
+            }
+
+            with open(output_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+
+            print(f"✅ Exported {len(cases)} cases to {output_file}")
+            return True
+        except Exception as e:
+            print(f"❌ Error exporting to JSON: {e}")
+            return False
+
+    def import_from_json(self, input_file: str) -> bool:
+        """Import fraud cases from JSON file"""
+        try:
+            with open(input_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            self.clear_all_cases()
+
+            for case_data in data.get("fraud_cases", []):
+                case = FraudCase(**case_data)
+                self.add_fraud_case(case)
+
+            print(
+                f"✅ Imported {len(data.get('fraud_cases', []))} cases from {input_file}"
+            )
+            return True
+        except Exception as e:
+            print(f"❌ Error importing from JSON: {e}")
+            return False
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get database statistics"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                cursor.execute("SELECT COUNT(*) FROM fraud_cases")
+                total = cursor.fetchone()[0]
+
+                cursor.execute(
+                    "SELECT COUNT(*) FROM fraud_cases WHERE status = 'confirmed_fraud'"
+                )
+                fraud_count = cursor.fetchone()[0]
+
+                cursor.execute(
+                    "SELECT COUNT(*) FROM fraud_cases WHERE status = 'confirmed_safe'"
+                )
+                safe_count = cursor.fetchone()[0]
+
+                cursor.execute(
+                    "SELECT COUNT(*) FROM fraud_cases WHERE status = 'pending'"
+                )
+                pending_count = cursor.fetchone()[0]
+
+            return {
+                "total_cases": total,
+                "confirmed_fraud": fraud_count,
+                "confirmed_safe": safe_count,
+                "pending": pending_count,
+            }
+        except Exception as e:
+            print(f"❌ Error getting statistics: {e}")
+            return {}
+
+    @staticmethod
+    def _row_to_fraud_case(row: sqlite3.Row) -> FraudCase:
+        """Convert database row to FraudCase object"""
+        return FraudCase(
+            id=row["id"],
+            userName=row["userName"],
+            securityIdentifier=row["securityIdentifier"],
+            cardEnding=row["cardEnding"],
+            cardType=row["cardType"],
+            transactionName=row["transactionName"],
+            transactionAmount=row["transactionAmount"],
+            transactionTime=row["transactionTime"],
+            transactionLocation=row["transactionLocation"],
+            transactionCategory=row["transactionCategory"],
+            transactionSource=row["transactionSource"],
+            status=row["status"],
+            securityQuestion=row["securityQuestion"],
+            securityAnswer=row["securityAnswer"],
+            createdAt=row["createdAt"],
+            outcome=row["outcome"],
+            outcomeNote=row["outcomeNote"] if row["outcomeNote"] else "",
         )
 
-# ======================================================
-# 🎬 ENTRYPOINT & INITIALIZATION
-# ======================================================
 
-def prewarm(proc: JobProcess):
-    proc.userdata["vad"] = silero.VAD.load()
-
-async def entrypoint(ctx: JobContext):
-    ctx.log_context_fields = {"room": ctx.room.name}
-
-    print("\n" + "🌿" * 25)
-    print("🚀 STARTING WELLNESS SESSION")
-    
-    # 1. Load History from JSON
-    history = load_history()
-    history_summary = "No previous history found. This is the first session."
-    
-    if history:
-        last_entry = history[-1]
-        history_summary = (
-            f"Last check-in was on {last_entry.get('timestamp', 'unknown date')}. "
-            f"User felt {last_entry.get('mood')} with {last_entry.get('energy')} energy. "
-            f"Their goals were: {', '.join(last_entry.get('objectives', []))}."
-        )
-        print("📜 HISTORY LOADED:", history_summary)
-    else:
-        print("📜 NO HISTORY FOUND.")
-
-    # 2. Initialize Session Data
-    userdata = Userdata(
-        current_checkin=CheckInState(),
-        history_summary=history_summary
-    )
-
-    # 3. Setup Agent
-    session = AgentSession(
-        stt=deepgram.STT(model="nova-3"),
-        llm=google.LLM(model="gemini-2.5-flash"),
-        tts=murf.TTS(
-            voice="en-US-natalie", # Using a softer, more caring voice
-            style="Promo",         # Often sounds more enthusiastic/supportive
-            text_pacing=True,
-        ),
-        turn_detection=MultilingualModel(),
-        vad=ctx.proc.userdata["vad"],
-        userdata=userdata,
-    )
-    
-    # 4. Start
-    await session.start(
-        agent=WellnessAgent(history_context=history_summary),
-        room=ctx.room,
-        room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVC()
-        ),
-    )
-
-    await ctx.connect()
-
-if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
+# Initialize database instance
+db = FraudDatabase()
